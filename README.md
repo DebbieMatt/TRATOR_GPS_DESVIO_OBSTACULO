@@ -38,7 +38,7 @@ Certifique-se de ter instalado as versões utilizadas a baixa para o bom funcion
 - movimentação 
 
 Esquematico das funcionalidades: 
-[link](); 
+[link no Circuito.io](https://www.circuito.io/app?components=512,11028,11061,13959,975601,7654321); 
 [Ilustração parecida]().
 
 ## Relacionados
@@ -62,6 +62,7 @@ Segue alguns projetos relacionados
 
 O projeto foi desenvolvido, utilizando:
 
+- [x] Circuito.io
 - [x] EasyEDA Design
 - [x] Altium Design
 - [x] Proteus
