@@ -30,15 +30,9 @@ Certifique-se de ter instalado as versões utilizadas a baixa para o bom funcion
 
 ## Funcionalidades atuais
 
-- Rfid
-- Teclado numerido 
-- Reprodução de som
-- Matriz de led 
-- infravermelho 
-- movimentação 
-
 Esquematico das funcionalidades: 
-[link no Circuito.io](https://www.circuito.io/app?components=513,11028,13959,360217,975601,7654321); 
+[Construa seu robô que desvia de obstáculos com Arduino](https://www.makerhero.com/blog/construa-seu-robo-que-desvia-de-obstaculos-com-arduino/?srsltid=AfmBOorI94quJKRGJXWZZ3w4-6Pve2dabSoNxZBjsStAE-XR39oxyfgq)
+[Link no Circuito.io](https://www.circuito.io/app?components=513,11028,13959,360217,975601,7654321); 
 [Ilustração parecida]().
 
 ## Relacionados
