@@ -77,7 +77,7 @@ Antes de começar, verifique se você atendeu aos seguintes requisitos:
 * Sistema operacional `<Windows ou Mac>`.
 
 
-## 🤝 Criador do Trator 
+## 🤝 Criadora e Autora do Trator 
 
 <table>
   <tr>
@@ -89,9 +89,6 @@ Antes de começar, verifique se você atendeu aos seguintes requisitos:
     </td>
   </tr>
 </table>
-          
-## Autora
-[Debbie Matt](https://github.com/DebbieMatt)<br>
 
 ## 📝 Licença
 
