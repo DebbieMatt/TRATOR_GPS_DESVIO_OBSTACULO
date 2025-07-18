@@ -1,7 +1,7 @@
 
-# Repositorio dos códigos Otto 1.0
+# Repositorio do Protótipo de Trator Autônomo com Navegação por GPS e Detecção de Obstáculos em tempo real
 
-Este repositório tem os novos códigos versão 2.0 do Otto e as versões das bibliotecas utilizadas no código, tão somente para uso do interno.
+Este repositório tem condições necessárias para montar um Trator Autônomo e suas posteriores versões, além das bibliotecas utilizadas no código, esquemático e modelagem.
 
 ## Documentação
 
@@ -9,7 +9,8 @@ Este é um projeto que utiliza a linguagem C++ e bibliotecas do Arduino, no enta
 
 ## Instalação
 
-Certifique-se de ter instalado as versões utilizadas a baixa para o bom funcionamento do código. Seu computador deve ter o [Arduino IDE](https://www.arduino.cc/en/software/), previamente instalado e atualizado, bem como o [Java](https://www.java.com/pt-BR/download/ie_manual.jsp?locale=pt_BR)   para que o softaware do [Arduino](https://www.arduino.cc/en/software) possa funcionar.
+Certifique-se de ter instalado as versões utilizadas a baixa para o bom funcionamento do código. Seu computador deve ter o [visual studio](https://visualstudio.microsoft.com/pt-br/#vs-section), previamente instalado e atualizado, bem como o [Java](https://www.java.com/pt-BR/download/ie_manual.jsp?locale=pt_BR), para que o softaware do [Arduino](https://www.arduino.cc/en/software) possa funcionar.
+
 
 ## Versões
 
