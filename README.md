@@ -39,8 +39,10 @@ Esquematico das funcionalidades:
 
 Segue alguns projetos relacionados
 
-- [Key pad](https://playground.arduino.cc/Code/Keypad/#Download)
-- [DFPlayer - A Mini MP3 Player For Arduino](https://github.com/DFRobot/DFRobotDFPlayerMini)
+- [Guia para construir um robô 2WD com arduino](https://medium.com/@rafaellevissa/guia-para-construir-um-rob%C3%B4-2wd-com-arduino-d50469480a2f)
+- [Como fazer um carrinho de controle remoto simples com Bluetooth](https://www.makerhero.com/blog/como-fazer-um-carrinho-de-controle-remoto-simples-com-bluetooth/?srsltid=AfmBOooyh1jkP8eRX-8lq_LOHTZi3gTlYVR0hXlJFOQP7Z6suqYV8KOR)
+- [Guia de Montagem: Carrinho-Robô com Arduino e Bluetooth (com programação e diagrama)](https://blog.saravati.com.br/guia-de-montagem-carrinho-robo-arduino-bluetooth/)
+- [How To Make A DIY Arduino Obstacle Avoiding Car At Home](https://youtu.be/1n_KjpMfVT0?si=jYDpIgPwvrgBudlv)
 
 # Referência do Circuito Elétrico do Trator/Carro guiado por GPS
 
