@@ -16,22 +16,16 @@ Certifique-se de ter instalado as versões utilizadas a baixa para o bom funcion
 
 | Biblioteca               | Versão |                   link                      |
 | ------------------------ | -------|---------------------------------------------|
-| Arduino/winstore         |  1.8.19/1.8.57.0     | [link](https://www.arduino.cc/en/software/OldSoftwareReleases#previous)|
-| SoftwareSerial.h         |  ?     | [link](https://link-da-documentação)|
-| DFRobotDFPlayerMini.h    |  ?     | [link](https://link-da-documentação)|
-| LedControl.h             |  ?     | [link](https://link-da-documentação)|
-| SPI.h                    |  ?     | [link](https://link-da-documentação)|
-| MFRC522.h                |  ?     | [link](https://link-da-documentação)|
-| IRremote.h               |  ?     | [link](https://github.com/Arduino-IRremote/Arduino-IRremote)|
-| avr/wdt.h                |  ?     | [link](https://link-da-documentação)|
-| Servo.h                  |  ?     | [link](https://link-da-documentacao)|
-| Keypad                   |  3.1.0     | [link](https://playground.arduino.cc/Code/Keypad/)|
-
+| Esp32.h                  |  3.3.0 | [link](https://github.com/espressif/arduino-esp32.git)|
+| DCMDriverL298.h          |  ?     | [link](https://github.com/rodriguesfas/DMPH_L298N.git)|
+| MPU6050.h                |  ?     | [link](https://github.com/ElectronicCats/mpu6050.git)|
+| I2Cdev.h                 |  1.0.3 | [link](https://github.com/jrowberg/i2cdevlib.git)|
+| Servo.h                  |  1.2.2 | [link](https://github.com/arduino-libraries/Servo.git)|
 
 ## Funcionalidades atuais
 
 Esquematico das funcionalidades: 
-[Construa seu robô que desvia de obstáculos com Arduino](https://www.makerhero.com/blog/construa-seu-robo-que-desvia-de-obstaculos-com-arduino/?srsltid=AfmBOorI94quJKRGJXWZZ3w4-6Pve2dabSoNxZBjsStAE-XR39oxyfgq)
+[Construa seu robô que desvia de obstáculos com Arduino](https://www.makerhero.com/blog/construa-seu-robo-que-desvia-de-obstaculos-com-arduino/?srsltid=AfmBOorI94quJKRGJXWZZ3w4-6Pve2dabSoNxZBjsStAE-XR39oxyfgq);
 [Link no Circuito.io](https://www.circuito.io/app?components=513,11028,13959,360217,975601,7654321); 
 [Ilustração parecida]().
 
@@ -62,7 +56,6 @@ O projeto foi desenvolvido, utilizando:
 - [x] EasyEDA Design
 - [x] Altium Design
 - [x] Proteus
-- [x] AutoCAD
 
 
 ## 💻 Pré-requisitos
