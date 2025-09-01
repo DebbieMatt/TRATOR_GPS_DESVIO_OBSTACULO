@@ -1,0 +1,422 @@
+#include "BluetoothSerial.h"  
+#include <ESP32Servo.h>
+#include <TinyGPS++.h>
+
+// Verificar se o ESP32 suporta Bluetooth
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
+#endif
+
+// Motor control pins - Ponte H
+#define MOTOR_RIGHT_PIN1 25  // OUT1 da ponte H (motores direita)
+#define MOTOR_RIGHT_PIN2 33  // OUT2 da ponte H (motores direita)
+#define MOTOR_LEFT_PIN1 32   // OUT3 da ponte H (motores esquerda)
+#define MOTOR_LEFT_PIN2 34   // OUT4 da ponte H (motores esquerda)
+
+// PINS PARA ENABLE DA PONTE H (MUITO IMPORTANTE!)
+#define MOTOR_RIGHT_ENABLE 26  // Enable para motores direita
+#define MOTOR_LEFT_ENABLE 27   // Enable para motores esquerda
+
+// Sensor pins
+#define PINO_TRIG 4
+#define PINO_ECHO 2
+#define PINO_LED 5
+#define SERVO_PIN 13
+
+// GPS pins
+#define RXD2 16
+#define TXD2 17
+#define GPS_BAUD 9600
+
+BluetoothSerial SerialBT; 
+char comando = 'S';
+bool motorsEnabled = true;
+bool debugMode = true;
+
+Servo servo1;
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(2);
+
+// Timing variables
+unsigned long lastCommand = 0;
+unsigned long lastDiagnostic = 0;
+
+void setup() {   
+    Serial.begin(115200);
+    delay(1000);
+    
+    Serial.println("=== DIAGNÓSTICO CARRINHO 4 MOTORES ===");
+    Serial.println("Iniciando diagnóstico...");
+    
+    // Initialize motor pins com pulldown
+    pinMode(MOTOR_RIGHT_PIN1, OUTPUT);   
+    pinMode(MOTOR_RIGHT_PIN2, OUTPUT);   
+    pinMode(MOTOR_LEFT_PIN1, OUTPUT);   
+    pinMode(MOTOR_LEFT_PIN2, OUTPUT);
+    
+    // IMPORTANTE: Configurar pinos ENABLE
+    pinMode(MOTOR_RIGHT_ENABLE, OUTPUT);
+    pinMode(MOTOR_LEFT_ENABLE, OUTPUT);
+    
+    // ATIVAR os enables da ponte H (CRUCIAL!)
+    digitalWrite(MOTOR_RIGHT_ENABLE, HIGH);
+    digitalWrite(MOTOR_LEFT_ENABLE, HIGH);
+    
+    // Garantir que motores iniciem parados
+    stopAllMotors();
+    
+    Serial.println("✓ Pinos dos motores configurados");
+    Serial.println("✓ ENABLE da ponte H ativados");
+    
+    // Initialize sensor pins
+    pinMode(PINO_TRIG, OUTPUT);
+    pinMode(PINO_ECHO, INPUT);
+    pinMode(PINO_LED, OUTPUT);
+    
+    Serial.println("✓ Sensores configurados");
+    
+    // Initialize servo
+    servo1.attach(SERVO_PIN);
+    servo1.write(90);
+    
+    Serial.println("✓ Servo configurado");
+    
+    // Initialize Bluetooth
+    if (!SerialBT.begin("Carrinho_Debug")) {
+        Serial.println("❌ ERRO: Bluetooth não inicializado!");
+    } else {
+        Serial.println("✓ Bluetooth: Carrinho_Debug");
+    }
+    
+    // Initialize GPS
+    gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
+    Serial.println("✓ GPS configurado");
+    
+    Serial.println("\n=== TESTE INICIAL DOS MOTORES ===");
+    testAllMotors();
+    
+    Serial.println("\n=== SISTEMA PRONTO ===");
+    Serial.println("Comandos Bluetooth:");
+    Serial.println("F=Frente | B=Ré | L=Esquerda | R=Direita | S=Parar");
+    Serial.println("T=Teste | D=Debug ON/OFF | E=Enable ON/OFF");
+    Serial.println("Envie comandos via Bluetooth ou Serial Monitor");
+}  
+
+void loop() {
+    unsigned long currentTime = millis();
+    
+    // Handle commands from both Bluetooth and Serial
+    handleCommands();
+    
+    // Diagnostic info every 5 seconds
+    if (debugMode && (currentTime - lastDiagnostic > 5000)) {
+        printDiagnostic();
+        lastDiagnostic = currentTime;
+    }
+    
+    // Safety: Stop motors after 5 seconds without command
+    if (currentTime - lastCommand > 5000) {
+        if (comando != 'S') {
+            stopAllMotors();
+            comando = 'S';
+            Serial.println("⚠️ TIMEOUT: Motores parados por segurança");
+        }
+    }
+    
+    // Update other systems
+    updateSonicSensor();
+    updateGPS();
+    
+    delay(50); // Small delay for stability
+}
+
+void handleCommands() {
+    char newCommand = 0;
+    
+    // Check Bluetooth
+    if (SerialBT.available()) {
+        newCommand = SerialBT.read();
+        Serial.print("📱 Bluetooth: ");
+    }
+    // Check Serial Monitor
+    else if (Serial.available()) {
+        newCommand = Serial.read();
+        Serial.print("💻 Serial: ");
+    }
+    
+    if (newCommand != 0) {
+        lastCommand = millis();
+        processCommand(newCommand);
+    }
+}
+
+void processCommand(char cmd) {
+    Serial.print("Comando '");
+    Serial.print(cmd);
+    Serial.println("' recebido");
+    
+    comando = cmd;
+    
+    switch (cmd) {
+        case 'F': case 'f':
+            moveForward();
+            break;
+        case 'B': case 'b':
+            moveBackward();
+            break;
+        case 'L': case 'l':
+            turnLeft();
+            break;
+        case 'R': case 'r':
+            turnRight();
+            break;
+        case 'G': case 'g':
+            curveLeft();
+            break;
+        case 'I': case 'i':
+            curveRight();
+            break;
+        case 'S': case 's':
+            stopAllMotors();
+            break;
+        case 'T': case 't':
+            testAllMotors();
+            break;
+        case 'D': case 'd':
+            debugMode = !debugMode;
+            Serial.print("Debug mode: ");
+            Serial.println(debugMode ? "ON" : "OFF");
+            break;
+        case 'E': case 'e':
+            motorsEnabled = !motorsEnabled;
+            digitalWrite(MOTOR_RIGHT_ENABLE, motorsEnabled ? HIGH : LOW);
+            digitalWrite(MOTOR_LEFT_ENABLE, motorsEnabled ? HIGH : LOW);
+            Serial.print("Motors enabled: ");
+            Serial.println(motorsEnabled ? "ON" : "OFF");
+            if (!motorsEnabled) stopAllMotors();
+            break;
+        case 'V': case 'v':
+            checkVoltage();
+            break;
+        default:
+            Serial.println("❌ Comando inválido!");
+            break;
+    }
+}
+
+// === FUNÇÕES DE MOVIMENTO ===
+
+void moveForward() {
+    if (!motorsEnabled) {
+        Serial.println("⚠️ Motores desabilitados!");
+        return;
+    }
+    
+    Serial.println("🔄 FRENTE");
+    setRightMotors(HIGH, LOW);
+    setLeftMotors(HIGH, LOW);
+    
+    if (debugMode) {
+        Serial.println("  Direita: PIN1=HIGH, PIN2=LOW");
+        Serial.println("  Esquerda: PIN1=HIGH, PIN2=LOW");
+    }
+}
+
+void moveBackward() {
+    if (!motorsEnabled) return;
+    
+    Serial.println("🔄 RÉ");
+    setRightMotors(LOW, HIGH);
+    setLeftMotors(LOW, HIGH);
+    
+    if (debugMode) {
+        Serial.println("  Direita: PIN1=LOW, PIN2=HIGH");
+        Serial.println("  Esquerda: PIN1=LOW, PIN2=HIGH");
+    }
+}
+
+void turnLeft() {
+    if (!motorsEnabled) return;
+    
+    Serial.println("🔄 ESQUERDA");
+    setRightMotors(HIGH, LOW);  // Direita para frente
+    setLeftMotors(LOW, HIGH);   // Esquerda para trás
+    
+    if (debugMode) {
+        Serial.println("  Direita: FRENTE");
+        Serial.println("  Esquerda: RÉ");
+    }
+}
+
+void turnRight() {
+    if (!motorsEnabled) return;
+    
+    Serial.println("🔄 DIREITA");
+    setRightMotors(LOW, HIGH);  // Direita para trás
+    setLeftMotors(HIGH, LOW);   // Esquerda para frente
+    
+    if (debugMode) {
+        Serial.println("  Direita: RÉ");
+        Serial.println("  Esquerda: FRENTE");
+    }
+}
+
+void curveLeft() {
+    if (!motorsEnabled) return;
+    
+    Serial.println("🔄 CURVA ESQUERDA");
+    setRightMotors(HIGH, LOW);  // Só direita
+    setLeftMotors(LOW, LOW);    // Esquerda parada
+}
+
+void curveRight() {
+    if (!motorsEnabled) return;
+    
+    Serial.println("🔄 CURVA DIREITA");
+    setRightMotors(LOW, LOW);   // Direita parada
+    setLeftMotors(HIGH, LOW);   // Só esquerda
+}
+
+void stopAllMotors() {
+    Serial.println("⏹️ PARADO");
+    setRightMotors(LOW, LOW);
+    setLeftMotors(LOW, LOW);
+    
+    if (debugMode) {
+        Serial.println("  Todos os motores: OFF");
+    }
+}
+
+// === FUNÇÕES DE CONTROLE BAIXO NÍVEL ===
+
+void setRightMotors(int pin1State, int pin2State) {
+    digitalWrite(MOTOR_RIGHT_PIN1, pin1State);
+    digitalWrite(MOTOR_RIGHT_PIN2, pin2State);
+    
+    if (debugMode) {
+        Serial.print("  🔧 Motores Direita - PIN1(25):");
+        Serial.print(pin1State ? "HIGH" : "LOW");
+        Serial.print(" PIN2(33):");
+        Serial.println(pin2State ? "HIGH" : "LOW");
+    }
+}
+
+void setLeftMotors(int pin1State, int pin2State) {
+    digitalWrite(MOTOR_LEFT_PIN1, pin1State);
+    digitalWrite(MOTOR_LEFT_PIN2, pin2State);
+    
+    if (debugMode) {
+        Serial.print("  🔧 Motores Esquerda - PIN1(32):");
+        Serial.print(pin1State ? "HIGH" : "LOW");
+        Serial.print(" PIN2(34):");
+        Serial.println(pin2State ? "HIGH" : "LOW");
+    }
+}
+
+// === FUNÇÕES DE TESTE ===
+
+void testAllMotors() {
+    Serial.println("\n🧪 === TESTE COMPLETO DOS MOTORES ===");
+    
+    Serial.println("1. Testando motores DIREITA para FRENTE...");
+    setRightMotors(HIGH, LOW);
+    setLeftMotors(LOW, LOW);
+    delay(1500);
+    stopAllMotors();
+    delay(500);
+    
+    Serial.println("2. Testando motores DIREITA para TRÁS...");
+    setRightMotors(LOW, HIGH);
+    setLeftMotors(LOW, LOW);
+    delay(1500);
+    stopAllMotors();
+    delay(500);
+    
+    Serial.println("3. Testando motores ESQUERDA para FRENTE...");
+    setRightMotors(LOW, LOW);
+    setLeftMotors(HIGH, LOW);
+    delay(1500);
+    stopAllMotors();
+    delay(500);
+    
+    Serial.println("4. Testando motores ESQUERDA para TRÁS...");
+    setRightMotors(LOW, LOW);
+    setLeftMotors(LOW, HIGH);
+    delay(1500);
+    stopAllMotors();
+    delay(500);
+    
+    Serial.println("5. Testando TODOS para FRENTE...");
+    moveForward();
+    delay(2000);
+    stopAllMotors();
+    
+    Serial.println("✅ Teste concluído!\n");
+}
+
+void printDiagnostic() {
+    Serial.println("\n📊 === DIAGNÓSTICO ===");
+    Serial.print("⚡ Motors Enabled: ");
+    Serial.println(motorsEnabled ? "✅ YES" : "❌ NO");
+    Serial.print("🔧 Right Enable (26): ");
+    Serial.println(digitalRead(MOTOR_RIGHT_ENABLE) ? "HIGH" : "LOW");
+    Serial.print("🔧 Left Enable (27): ");
+    Serial.println(digitalRead(MOTOR_LEFT_ENABLE) ? "HIGH" : "LOW");
+    Serial.print("📱 Bluetooth Connected: ");
+    Serial.println(SerialBT.hasClient() ? "✅ YES" : "❌ NO");
+    Serial.print("📡 GPS Satellites: ");
+    Serial.println(gps.satellites.value());
+    Serial.print("🎯 Last Command: ");
+    Serial.println(comando);
+    Serial.println("------------------------");
+}
+
+void checkVoltage() {
+    Serial.println("🔋 === VERIFICAÇÃO DE ALIMENTAÇÃO ===");
+    Serial.println("Verifique:");
+    Serial.println("1. Bateria/fonte fornecendo 7V para ponte H");
+    Serial.println("2. ESP32 alimentado separadamente (USB/VIN)");
+    Serial.println("3. GND comum entre ESP32 e ponte H");
+    Serial.println("4. Conexões dos motores na ponte H");
+    Serial.println("5. Enable da ponte H conectado aos pinos 26 e 27");
+    
+    // Test digital pins
+    Serial.println("\n🔌 Estado dos pinos:");
+    Serial.print("PIN 25 (Motor Right 1): ");
+    Serial.println(digitalRead(MOTOR_RIGHT_PIN1) ? "HIGH" : "LOW");
+    Serial.print("PIN 33 (Motor Right 2): ");
+    Serial.println(digitalRead(MOTOR_RIGHT_PIN2) ? "HIGH" : "LOW");
+    Serial.print("PIN 32 (Motor Left 1): ");
+    Serial.println(digitalRead(MOTOR_LEFT_PIN1) ? "HIGH" : "LOW");
+    Serial.print("PIN 34 (Motor Left 2): ");
+    Serial.println(digitalRead(MOTOR_LEFT_PIN2) ? "HIGH" : "LOW");
+    Serial.print("PIN 26 (Right Enable): ");
+    Serial.println(digitalRead(MOTOR_RIGHT_ENABLE) ? "HIGH" : "LOW");
+    Serial.print("PIN 27 (Left Enable): ");
+    Serial.println(digitalRead(MOTOR_LEFT_ENABLE) ? "HIGH" : "LOW");
+}
+
+void updateSonicSensor() {
+    static unsigned long lastSensorRead = 0;
+    if (millis() - lastSensorRead < 100) return;
+    
+    digitalWrite(PINO_TRIG, LOW);
+    delayMicroseconds(2);
+    digitalWrite(PINO_TRIG, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(PINO_TRIG, LOW);
+    
+    long duracao = pulseIn(PINO_ECHO, HIGH, 30000);
+    if (duracao > 0) {
+        float distancia = (duracao * 0.0343) / 2.0;
+        digitalWrite(PINO_LED, (distancia <= 10.0) ? HIGH : LOW);
+    }
+    
+    lastSensorRead = millis();
+}
+
+void updateGPS() {
+    while (gpsSerial.available() > 0) {
+        gps.encode(gpsSerial.read());
+    }
+}
