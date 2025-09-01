@@ -1,0 +1,801 @@
+#include "BluetoothSerial.h"  
+#include <ESP32Servo.h>
+#include <TinyGPS++.h>
+
+// Verificar se o ESP32 suporta Bluetooth
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
+#endif
+
+// Motor control pins - Ponte H
+#define MOTOR_RIGHT_PIN1 25  // OUT1 da ponte H (motores direita)
+#define MOTOR_RIGHT_PIN2 33  // OUT2 da ponte H (motores direita)
+#define MOTOR_LEFT_PIN1 32   // OUT3 da ponte H (motores esquerda)
+#define MOTOR_LEFT_PIN2 34   // OUT4 da ponte H (motores esquerda)
+
+// PINS PARA ENABLE DA PONTE H (MUITO IMPORTANTE!)
+#define MOTOR_RIGHT_ENABLE 26  // Enable para motores direita
+#define MOTOR_LEFT_ENABLE 27   // Enable para motores esquerda
+
+// Sensor pins
+#define PINO_TRIG 4
+#define PINO_ECHO 2
+#define PINO_LED 5
+#define SERVO_PIN 13
+
+// GPS pins
+#define RXD2 16
+#define TXD2 17
+#define GPS_BAUD 9600
+
+BluetoothSerial SerialBT; 
+char comando = 'S';
+bool motorsEnabled = true;
+bool debugMode = true;
+
+Servo servo1;
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(2);
+
+// Waypoints pré-definidos (latitude, longitude) 
+const int NUM_WAYPOINTS = 5; 
+const double WAYPOINTS[NUM_WAYPOINTS][2] = {   
+  {-56.09878805769986, -15.6816108733274},  // Waypoint 1   
+  {-56.09876394510655, -15.68160003000896}, // Waypoint 2   
+  {-56.09877912956421, -15.68157591307829}, // Waypoint 3   
+  {-56.09880370105573, -15.68158545182519}, // Waypoint 4 
+  {-56.09881400464977, -15.68156734210138}  // Waypoint 5
+};
+
+// Navegação autônoma
+int currentWaypoint = 0;
+bool autonomousMode = true; // INICIA AUTOMATICAMENTE EM MODO AUTÔNOMO
+bool waypointReached[NUM_WAYPOINTS] = {false, false, false, false, false};
+double currentLat = 0.0;
+double currentLng = 0.0;
+const double WAYPOINT_THRESHOLD = 0.00002; // ~2 metros de precisão
+bool manualOverride = false; // Flag para controle manual temporário
+unsigned long lastManualCommand = 0;
+const unsigned long MANUAL_TIMEOUT = 3000; // 3 segundos para retornar ao autônomo
+
+// Timing variables
+unsigned long lastCommand = 0;
+unsigned long lastDiagnostic = 0;
+unsigned long lastNavigation = 0;
+
+void setup() {   
+    Serial.begin(115200);
+    delay(1000);
+    
+    Serial.println("=== DIAGNÓSTICO CARRINHO 4 MOTORES ===");
+    Serial.println("Iniciando diagnóstico...");
+    
+    // Initialize motor pins com pulldown
+    pinMode(MOTOR_RIGHT_PIN1, OUTPUT);   
+    pinMode(MOTOR_RIGHT_PIN2, OUTPUT);   
+    pinMode(MOTOR_LEFT_PIN1, OUTPUT);   
+    pinMode(MOTOR_LEFT_PIN2, OUTPUT);
+    
+    // IMPORTANTE: Configurar pinos ENABLE
+    pinMode(MOTOR_RIGHT_ENABLE, OUTPUT);
+    pinMode(MOTOR_LEFT_ENABLE, OUTPUT);
+    
+    // ATIVAR os enables da ponte H (CRUCIAL!)
+    digitalWrite(MOTOR_RIGHT_ENABLE, HIGH);
+    digitalWrite(MOTOR_LEFT_ENABLE, HIGH);
+    
+    // Garantir que motores iniciem parados
+    stopAllMotors();
+    
+    Serial.println("✓ Pinos dos motores configurados");
+    Serial.println("✓ ENABLE da ponte H ativados");
+    
+    // Initialize sensor pins
+    pinMode(PINO_TRIG, OUTPUT);
+    pinMode(PINO_ECHO, INPUT);
+    pinMode(PINO_LED, OUTPUT);
+    
+    Serial.println("✓ Sensores configurados");
+    
+    // Initialize servo
+    servo1.attach(SERVO_PIN);
+    servo1.write(90);
+    
+    Serial.println("✓ Servo configurado");
+    
+    // Initialize Bluetooth
+    if (!SerialBT.begin("Carrinho_Debug")) {
+        Serial.println("❌ ERRO: Bluetooth não inicializado!");
+    } else {
+        Serial.println("✓ Bluetooth: Carrinho_Debug");
+    }
+    
+    // Initialize GPS
+    gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
+    Serial.println("✓ GPS configurado");
+    
+    Serial.println("\n=== TESTE INICIAL DOS MOTORES ===");
+    testAllMotors();
+    
+    Serial.println("\n=== SISTEMA PRONTO ===");
+    Serial.println("Comandos Bluetooth:");
+    Serial.println("F=Frente | B=Ré | L=Esquerda | R=Direita | S=Parar");
+    Serial.println("T=Teste | D=Debug ON/OFF | E=Enable ON/OFF");
+    Serial.println("A=Auto Mode | M=Manual | W=Show Waypoints | N=Next Waypoint");
+    Serial.println("Envie comandos via Bluetooth ou Serial Monitor");
+    Serial.println();
+    
+    printWaypoints();
+}  
+
+void loop() {
+    unsigned long currentTime = millis();
+    
+    // Handle commands from both Bluetooth and Serial
+    handleCommands();
+    
+    // Diagnostic info every 5 seconds
+    if (debugMode && (currentTime - lastDiagnostic > 5000)) {
+        printDiagnostic();
+        lastDiagnostic = currentTime;
+    }
+    
+    // Safety: Stop motors after 5 seconds without command
+    if (currentTime - lastCommand > 5000) {
+        if (comando != 'S') {
+            stopAllMotors();
+            comando = 'S';
+            Serial.println("⚠️ TIMEOUT: Motores parados por segurança");
+        }
+    }
+    
+    // Update navigation if in autonomous mode
+    if (autonomousMode && (currentTime - lastNavigation > 500)) {
+        updateNavigation();
+        lastNavigation = currentTime;
+    }
+    
+    // Update other systems
+    updateSonicSensor();
+    updateGPS();
+    
+    delay(50); // Small delay for stability
+}
+
+void handleCommands() {
+    char newCommand = 0;
+    
+    // Check Bluetooth
+    if (SerialBT.available()) {
+        newCommand = SerialBT.read();
+        Serial.print("📱 Bluetooth: ");
+    }
+    // Check Serial Monitor
+    else if (Serial.available()) {
+        newCommand = Serial.read();
+        Serial.print("💻 Serial: ");
+    }
+    
+    if (newCommand != 0) {
+        lastCommand = millis();
+        processCommand(newCommand);
+    }
+}
+
+void processCommand(char cmd) {
+    Serial.print("📱 Comando '");
+    Serial.print(cmd);
+    Serial.print("' recebido");
+    
+    // Check if it's a movement command (manual override)
+    if (cmd == 'F' || cmd == 'f' || cmd == 'B' || cmd == 'b' || 
+        cmd == 'L' || cmd == 'l' || cmd == 'R' || cmd == 'r' || 
+        cmd == 'G' || cmd == 'g' || cmd == 'I' || cmd == 'i' || 
+        cmd == 'S' || cmd == 's') {
+        
+        manualOverride = true;
+        lastManualCommand = millis();
+        Serial.println(" - CONTROLE MANUAL ATIVO");
+    } else {
+        Serial.println();
+    }
+    
+    comando = cmd;
+    
+    switch (cmd) {
+        case 'F': case 'f':
+            moveForward();
+            break;
+        case 'B': case 'b':
+            moveBackward();
+            break;
+        case 'L': case 'l':
+            turnLeft();
+            break;
+        case 'R': case 'r':
+            turnRight();
+            break;
+        case 'G': case 'g':
+            curveLeft();
+            break;
+        case 'I': case 'i':
+            curveRight();
+            break;
+        case 'S': case 's':
+            stopAllMotors();
+            break;
+        case 'T': case 't':
+            testAllMotors();
+            break;
+        case 'D': case 'd':
+            debugMode = !debugMode;
+            Serial.print("Debug mode: ");
+            Serial.println(debugMode ? "ON" : "OFF");
+            break;
+        case 'E': case 'e':
+            motorsEnabled = !motorsEnabled;
+            digitalWrite(MOTOR_RIGHT_ENABLE, motorsEnabled ? HIGH : LOW);
+            digitalWrite(MOTOR_LEFT_ENABLE, motorsEnabled ? HIGH : LOW);
+            Serial.print("Motors enabled: ");
+            Serial.println(motorsEnabled ? "ON" : "OFF");
+            if (!motorsEnabled) stopAllMotors();
+            break;
+        case 'V': case 'v':
+            checkVoltage();
+            break;
+        case 'A': case 'a':
+            // Force autonomous mode ON
+            autonomousMode = true;
+            manualOverride = false;
+            Serial.println("🤖 Modo AUTÔNOMO forçado");
+            break;
+        case 'M': case 'm':
+            // Force manual override
+            manualOverride = true;
+            lastManualCommand = millis();
+            stopAllMotors();
+            Serial.println("🎮 Override MANUAL forçado");
+            break;
+        case 'W': case 'w':
+            printWaypoints();
+            break;
+        case 'N': case 'n':
+            nextWaypoint();
+            break;
+        case 'C': case 'c':
+            clearWaypointProgress();
+            break;
+        default:
+            Serial.println("❌ Comando inválido!");
+            break;
+    }
+}
+
+// === FUNÇÕES DE MOVIMENTO ===
+
+void moveForward() {
+    if (!motorsEnabled) {
+        Serial.println("⚠️ Motores desabilitados!");
+        return;
+    }
+    
+    if (manualOverride) {
+        Serial.println("🎮 MANUAL: FRENTE");
+    } else {
+        Serial.println("🤖 AUTO: FRENTE");
+    }
+    
+    setRightMotors(HIGH, LOW);
+    setLeftMotors(HIGH, LOW);
+    
+    if (debugMode) {
+        Serial.println("  Direita: PIN1=HIGH, PIN2=LOW");
+        Serial.println("  Esquerda: PIN1=HIGH, PIN2=LOW");
+    }
+}
+
+void moveBackward() {
+    if (!motorsEnabled) return;
+    
+    Serial.println("🔄 RÉ");
+    setRightMotors(LOW, HIGH);
+    setLeftMotors(LOW, HIGH);
+    
+    if (debugMode) {
+        Serial.println("  Direita: PIN1=LOW, PIN2=HIGH");
+        Serial.println("  Esquerda: PIN1=LOW, PIN2=HIGH");
+    }
+}
+
+void turnLeft() {
+    if (!motorsEnabled) return;
+    
+    if (manualOverride) {
+        Serial.println("🎮 MANUAL: ESQUERDA");
+    } else {
+        Serial.println("🤖 AUTO: ESQUERDA");
+    }
+    
+    setRightMotors(HIGH, LOW);  // Direita para frente
+    setLeftMotors(LOW, HIGH);   // Esquerda para trás
+    
+    if (debugMode) {
+        Serial.println("  Direita: FRENTE");
+        Serial.println("  Esquerda: RÉ");
+    }
+}
+
+void turnRight() {
+    if (!motorsEnabled) return;
+    
+    if (manualOverride) {
+        Serial.println("🎮 MANUAL: DIREITA");
+    } else {
+        Serial.println("🤖 AUTO: DIREITA");
+    }
+    
+    setRightMotors(LOW, HIGH);  // Direita para trás
+    setLeftMotors(HIGH, LOW);   // Esquerda para frente
+    
+    if (debugMode) {
+        Serial.println("  Direita: RÉ");
+        Serial.println("  Esquerda: FRENTE");
+    }
+}
+
+void curveLeft() {
+    if (!motorsEnabled) return;
+    
+    Serial.println("🔄 CURVA ESQUERDA");
+    setRightMotors(HIGH, LOW);  // Só direita
+    setLeftMotors(LOW, LOW);    // Esquerda parada
+}
+
+void curveRight() {
+    if (!motorsEnabled) return;
+    
+    Serial.println("🔄 CURVA DIREITA");
+    setRightMotors(LOW, LOW);   // Direita parada
+    setLeftMotors(HIGH, LOW);   // Só esquerda
+}
+
+void stopAllMotors() {
+    if (manualOverride) {
+        Serial.println("🎮 MANUAL: PARADO");
+    } else if (autonomousMode) {
+        Serial.println("🤖 AUTO: PARADO");
+    } else {
+        Serial.println("⏹️ PARADO");
+    }
+    
+    setRightMotors(LOW, LOW);
+    setLeftMotors(LOW, LOW);
+    
+    if (debugMode) {
+        Serial.println("  Todos os motores: OFF");
+    }
+}
+
+// === FUNÇÕES DE CONTROLE BAIXO NÍVEL ===
+
+void setRightMotors(int pin1State, int pin2State) {
+    digitalWrite(MOTOR_RIGHT_PIN1, pin1State);
+    digitalWrite(MOTOR_RIGHT_PIN2, pin2State);
+    
+    if (debugMode) {
+        Serial.print("  🔧 Motores Direita - PIN1(25):");
+        Serial.print(pin1State ? "HIGH" : "LOW");
+        Serial.print(" PIN2(33):");
+        Serial.println(pin2State ? "HIGH" : "LOW");
+    }
+}
+
+void setLeftMotors(int pin1State, int pin2State) {
+    digitalWrite(MOTOR_LEFT_PIN1, pin1State);
+    digitalWrite(MOTOR_LEFT_PIN2, pin2State);
+    
+    if (debugMode) {
+        Serial.print("  🔧 Motores Esquerda - PIN1(32):");
+        Serial.print(pin1State ? "HIGH" : "LOW");
+        Serial.print(" PIN2(34):");
+        Serial.println(pin2State ? "HIGH" : "LOW");
+    }
+}
+
+// === FUNÇÕES DE TESTE ===
+
+void testAllMotors() {
+    Serial.println("\n🧪 === TESTE COMPLETO DOS MOTORES ===");
+    
+    Serial.println("1. Testando motores DIREITA para FRENTE...");
+    setRightMotors(HIGH, LOW);
+    setLeftMotors(LOW, LOW);
+    delay(1500);
+    stopAllMotors();
+    delay(500);
+    
+    Serial.println("2. Testando motores DIREITA para TRÁS...");
+    setRightMotors(LOW, HIGH);
+    setLeftMotors(LOW, LOW);
+    delay(1500);
+    stopAllMotors();
+    delay(500);
+    
+    Serial.println("3. Testando motores ESQUERDA para FRENTE...");
+    setRightMotors(LOW, LOW);
+    setLeftMotors(HIGH, LOW);
+    delay(1500);
+    stopAllMotors();
+    delay(500);
+    
+    Serial.println("4. Testando motores ESQUERDA para TRÁS...");
+    setRightMotors(LOW, LOW);
+    setLeftMotors(LOW, HIGH);
+    delay(1500);
+    stopAllMotors();
+    delay(500);
+    
+    Serial.println("5. Testando TODOS para FRENTE...");
+    moveForward();
+    delay(2000);
+    stopAllMotors();
+    
+    Serial.println("✅ Teste concluído!\n");
+}
+
+void printDiagnostic() {
+    Serial.println("\n📊 === DIAGNÓSTICO ===");
+    Serial.print("⚡ Motors Enabled: ");
+    Serial.println(motorsEnabled ? "✅ YES" : "❌ NO");
+    Serial.print("🔧 Right Enable (26): ");
+    Serial.println(digitalRead(MOTOR_RIGHT_ENABLE) ? "HIGH" : "LOW");
+    Serial.print("🔧 Left Enable (27): ");
+    Serial.println(digitalRead(MOTOR_LEFT_ENABLE) ? "HIGH" : "LOW");
+    Serial.print("📱 Bluetooth Connected: ");
+    Serial.println(SerialBT.hasClient() ? "✅ YES" : "❌ NO");
+    Serial.print("📡 GPS Satellites: ");
+    Serial.println(gps.satellites.value());
+    Serial.print("🎯 Last Command: ");
+    Serial.println(comando);
+    Serial.print("🤖 Autonomous Mode: ");
+    Serial.println(autonomousMode ? "✅ ON" : "❌ OFF");
+    Serial.print("🎮 Manual Override: ");
+    Serial.println(manualOverride ? "✅ ATIVO" : "❌ INATIVO");
+    
+    if (autonomousMode && !manualOverride) {
+        Serial.print("📍 Current Waypoint: ");
+        Serial.print(currentWaypoint + 1);
+        Serial.print("/");
+        Serial.println(NUM_WAYPOINTS);
+        
+        if (gps.location.isValid()) {
+            Serial.println("🛰️ GPS: VÁLIDO");
+        } else {
+            Serial.println("❌ GPS: AGUARDANDO SINAL");
+        }
+    }
+    
+    if (manualOverride) {
+        unsigned long timeLeft = MANUAL_TIMEOUT - (millis() - lastManualCommand);
+        if (timeLeft > 0) {
+            Serial.print("⏰ Retorno ao AUTO em: ");
+            Serial.print(timeLeft / 1000);
+            Serial.println("s");
+        }
+    }
+    Serial.println("------------------------");
+}
+
+void checkVoltage() {
+    Serial.println("🔋 === VERIFICAÇÃO DE ALIMENTAÇÃO ===");
+    Serial.println("Verifique:");
+    Serial.println("1. Bateria/fonte fornecendo 7V para ponte H");
+    Serial.println("2. ESP32 alimentado separadamente (USB/VIN)");
+    Serial.println("3. GND comum entre ESP32 e ponte H");
+    Serial.println("4. Conexões dos motores na ponte H");
+    Serial.println("5. Enable da ponte H conectado aos pinos 26 e 27");
+    
+    // Test digital pins
+    Serial.println("\n🔌 Estado dos pinos:");
+    Serial.print("PIN 25 (Motor Right 1): ");
+    Serial.println(digitalRead(MOTOR_RIGHT_PIN1) ? "HIGH" : "LOW");
+    Serial.print("PIN 33 (Motor Right 2): ");
+    Serial.println(digitalRead(MOTOR_RIGHT_PIN2) ? "HIGH" : "LOW");
+    Serial.print("PIN 32 (Motor Left 1): ");
+    Serial.println(digitalRead(MOTOR_LEFT_PIN1) ? "HIGH" : "LOW");
+    Serial.print("PIN 34 (Motor Left 2): ");
+    Serial.println(digitalRead(MOTOR_LEFT_PIN2) ? "HIGH" : "LOW");
+    Serial.print("PIN 26 (Right Enable): ");
+    Serial.println(digitalRead(MOTOR_RIGHT_ENABLE) ? "HIGH" : "LOW");
+    Serial.print("PIN 27 (Left Enable): ");
+    Serial.println(digitalRead(MOTOR_LEFT_ENABLE) ? "HIGH" : "LOW");
+}
+
+// === FUNÇÕES DE NAVEGAÇÃO AUTÔNOMA ===
+
+void toggleAutonomousMode() {
+    autonomousMode = !autonomousMode;
+    
+    if (autonomousMode) {
+        if (gps.location.isValid()) {
+            Serial.println("🤖 MODO AUTÔNOMO ATIVADO");
+            currentWaypoint = 0;
+            clearWaypointProgress();
+            Serial.print("🎯 Indo para waypoint ");
+            Serial.println(currentWaypoint + 1);
+        } else {
+            autonomousMode = false;
+            Serial.println("❌ GPS inválido! Modo autônomo desabilitado.");
+        }
+    } else {
+        stopAllMotors();
+        Serial.println("🎮 Modo MANUAL ativado");
+    }
+}
+
+void updateNavigation() {
+    // Only run if not in manual override and GPS is valid
+    if (manualOverride || !gps.location.isValid() || currentWaypoint >= NUM_WAYPOINTS) {
+        return;
+    }
+    
+    double targetLat = WAYPOINTS[currentWaypoint][0];
+    double targetLng = WAYPOINTS[currentWaypoint][1];
+    
+    // Calculate distance and bearing to target
+    double distance = calculateDistance(currentLat, currentLng, targetLat, targetLng);
+    double bearing = calculateBearing(currentLat, currentLng, targetLat, targetLng);
+    
+    // Check for obstacle
+    if (checkObstacle()) {
+        stopAllMotors();
+        Serial.println("⚠️ OBSTÁCULO detectado! Parando navegação...");
+        return;
+    }
+    
+    // Navigate towards waypoint
+    if (distance > WAYPOINT_THRESHOLD) {
+        navigateToTarget(bearing);
+        
+        if (debugMode) {
+            Serial.print("🎯 AUTO NAV - Dist: ");
+            Serial.print(distance * 111320, 1); // Convert to meters approximately
+            Serial.print("m | Rumo: ");
+            Serial.print(bearing, 1);
+            Serial.println("°");
+        }
+    }
+}
+
+void navigateToTarget(double bearing) {
+    // Simple navigation logic based on bearing
+    // Normalize bearing to 0-360
+    if (bearing < 0) bearing += 360;
+    
+    double currentHeading = 0; // Would need compass for real heading
+    double headingDiff = bearing - currentHeading;
+    
+    // Normalize heading difference to -180 to 180
+    while (headingDiff > 180) headingDiff -= 360;
+    while (headingDiff < -180) headingDiff += 360;
+    
+    // Simple steering logic
+    if (abs(headingDiff) < 15) {
+        // Go straight
+        moveForward();
+    } else if (headingDiff > 0) {
+        // Turn right
+        turnRight();
+        delay(200);
+    } else {
+        // Turn left  
+        turnLeft();
+        delay(200);
+    }
+}
+
+double calculateDistance(double lat1, double lng1, double lat2, double lng2) {
+    // Haversine formula for distance calculation
+    double dLat = toRadians(lat2 - lat1);
+    double dLng = toRadians(lng2 - lng1);
+    
+    double a = sin(dLat/2) * sin(dLat/2) + 
+               cos(toRadians(lat1)) * cos(toRadians(lat2)) * 
+               sin(dLng/2) * sin(dLng/2);
+    
+    double c = 2 * atan2(sqrt(a), sqrt(1-a));
+    return c; // Returns distance in radians (multiply by Earth radius for meters)
+}
+
+double calculateBearing(double lat1, double lng1, double lat2, double lng2) {
+    double dLng = toRadians(lng2 - lng1);
+    double lat1Rad = toRadians(lat1);
+    double lat2Rad = toRadians(lat2);
+    
+    double y = sin(dLng) * cos(lat2Rad);
+    double x = cos(lat1Rad) * sin(lat2Rad) - sin(lat1Rad) * cos(lat2Rad) * cos(dLng);
+    
+    double bearing = toDegrees(atan2(y, x));
+    return fmod((bearing + 360.0), 360.0); // Normalize to 0-360
+}
+
+double toRadians(double deg) {
+    return deg * PI / 180.0;
+}
+
+double toDegrees(double rad) {
+    return rad * 180.0 / PI;
+}
+
+void checkWaypointReached() {
+    if (currentWaypoint >= NUM_WAYPOINTS) return;
+    
+    double distance = calculateDistance(
+        currentLat, currentLng, 
+        WAYPOINTS[currentWaypoint][0], 
+        WAYPOINTS[currentWaypoint][1]
+    );
+    
+    if (distance <= WAYPOINT_THRESHOLD) {
+        waypointReached[currentWaypoint] = true;
+        Serial.print("✅ WAYPOINT ");
+        Serial.print(currentWaypoint + 1);
+        Serial.println(" ALCANÇADO!");
+        
+        // Pequena pausa comemorativa
+        stopAllMotors();
+        delay(1000);
+        
+        currentWaypoint++;
+        
+        if (currentWaypoint >= NUM_WAYPOINTS) {
+            Serial.println("🎉 TODOS OS WAYPOINTS ALCANÇADOS!");
+            Serial.println("🤖 Navegação autônoma concluída - Modo manual disponível");
+            stopAllMotors();
+            autonomousMode = false; // Finaliza modo autônomo
+            printMissionSummary();
+        } else {
+            Serial.print("🎯 Próximo waypoint: ");
+            Serial.println(currentWaypoint + 1);
+        }
+    }
+}
+
+bool checkObstacle() {
+    // Read ultrasonic sensor
+    digitalWrite(PINO_TRIG, LOW);
+    delayMicroseconds(2);
+    digitalWrite(PINO_TRIG, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(PINO_TRIG, LOW);
+    
+    long duracao = pulseIn(PINO_ECHO, HIGH, 30000);
+    if (duracao > 0) {
+        float distancia = (duracao * 0.0343) / 2.0;
+        return distancia <= 20.0; // Stop if obstacle within 20cm
+    }
+    return false;
+}
+
+void printWaypoints() {
+    Serial.println("\n📍 === WAYPOINTS DEFINIDOS ===");
+    for (int i = 0; i < NUM_WAYPOINTS; i++) {
+        Serial.print("Waypoint ");
+        Serial.print(i + 1);
+        Serial.print(": ");
+        Serial.print(WAYPOINTS[i][0], 8);
+        Serial.print(", ");
+        Serial.print(WAYPOINTS[i][1], 8);
+        Serial.print(" [");
+        Serial.print(waypointReached[i] ? "✅ ALCANÇADO" : "⏳ PENDENTE");
+        Serial.println("]");
+    }
+    
+    if (gps.location.isValid()) {
+        Serial.println("\n📡 Posição atual:");
+        Serial.print("LAT: ");
+        Serial.print(currentLat, 8);
+        Serial.print(" | LNG: ");
+        Serial.println(currentLng, 8);
+        
+        if (autonomousMode && currentWaypoint < NUM_WAYPOINTS) {
+            double distance = calculateDistance(
+                currentLat, currentLng,
+                WAYPOINTS[currentWaypoint][0], 
+                WAYPOINTS[currentWaypoint][1]
+            );
+            Serial.print("📏 Distância para próximo waypoint: ");
+            Serial.print(distance * 111320, 1);
+            Serial.println(" metros");
+        }
+    } else {
+        Serial.println("\n❌ GPS sem sinal válido");
+    }
+    Serial.println();
+}
+
+void nextWaypoint() {
+    if (currentWaypoint < NUM_WAYPOINTS - 1) {
+        currentWaypoint++;
+        Serial.print("⏭️ Pulando para waypoint ");
+        Serial.println(currentWaypoint + 1);
+    } else {
+        Serial.println("❌ Já no último waypoint!");
+    }
+}
+
+void clearWaypointProgress() {
+    for (int i = 0; i < NUM_WAYPOINTS; i++) {
+        waypointReached[i] = false;
+    }
+    currentWaypoint = 0;
+    Serial.println("🔄 Progresso dos waypoints resetado");
+}
+
+void printMissionSummary() {
+    Serial.println("\n🏁 === MISSÃO COMPLETA ===");
+    Serial.print("✅ Waypoints alcançados: ");
+    
+    int reached = 0;
+    for (int i = 0; i < NUM_WAYPOINTS; i++) {
+        if (waypointReached[i]) reached++;
+    }
+    
+    Serial.print(reached);
+    Serial.print("/");
+    Serial.println(NUM_WAYPOINTS);
+    
+    if (reached == NUM_WAYPOINTS) {
+        Serial.println("🎉 MISSÃO 100% CONCLUÍDA!");
+    } else {
+        Serial.println("⚠️ Missão incompleta");
+    }
+    Serial.println();
+}
+
+void updateSonicSensor() {
+    static unsigned long lastSensorRead = 0;
+    if (millis() - lastSensorRead < 100) return;
+    
+    digitalWrite(PINO_TRIG, LOW);
+    delayMicroseconds(2);
+    digitalWrite(PINO_TRIG, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(PINO_TRIG, LOW);
+    
+    long duracao = pulseIn(PINO_ECHO, HIGH, 30000);
+    if (duracao > 0) {
+        float distancia = (duracao * 0.0343) / 2.0;
+        digitalWrite(PINO_LED, (distancia <= 10.0) ? HIGH : LOW);
+    }
+    
+    lastSensorRead = millis();
+}
+
+void updateGPS() {
+    while (gpsSerial.available() > 0) {
+        if (gps.encode(gpsSerial.read())) {
+            if (gps.location.isUpdated() && gps.location.isValid()) {
+                currentLat = gps.location.lat();
+                currentLng = gps.location.lng();
+                
+                // Check waypoint proximity
+                if (autonomousMode) {
+                    checkWaypointReached();
+                }
+                
+                // Print GPS info less frequently
+                static uint8_t gpsCounter = 0;
+                if (debugMode && (++gpsCounter >= 20)) {
+                    Serial.print("📡 GPS: ");
+                    Serial.print(currentLat, 8);
+                    Serial.print(", ");
+                    Serial.print(currentLng, 8);
+                    Serial.print(" | Sat: ");
+                    Serial.println(gps.satellites.value());
+                    gpsCounter = 0;
+                }
+            }
+        }
+    }
+}
