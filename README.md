@@ -48,18 +48,27 @@ O projeto foi desenvolvido, utilizando:
 - [x] Proteus
 - [x] Cirkit Designer IDE 
 
-## 🤝 Criadora e Autora do Trator 
+## 🤝 Criadora e Colaboradora do Trator 
 
 <table>
   <tr>
     <td align="center">
+      <a href="https://github.com/maria01eduarda" title="Autora">
+        <img src="https://avatars.githubusercontent.com/u/100963109?v=4" width="100px;" alt="Foto da Maria"/><br>
+        <sub>
+          <b>Maria Eduarda - Autora</b>
+        </sub>
+      </a>
+    </td>
+    <td align="center">
       <a href="https://github.com/DebbieMatt" title="Colaboradora">
         <img src="https://avatars.githubusercontent.com/u/112919058?v=4" width="100px;" alt="Foto da Débora"/><br>
         <sub>
-          <b>Débora Mateus</b>
+          <b>Débora Mateus - Colaboradora</b>
     </td>
   </tr>
 </table>
+
 
 ## 📝 Licença
 
