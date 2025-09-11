@@ -22,9 +22,9 @@ Certifique-se de ter instalado as versões utilizadas a baixa para o bom funcion
 
 Esquematico das funcionalidades: 
 
-* [Esquemático no Cirkit Designer IDE](https://app.cirkitdesigner.com/project/fb852b8b-9fb0-4f59-820c-47285ad7006e);
-* [Esquemático no Circuito.io](https://www.circuito.io/app?components=513,11028,13959,360217,975601,7654321); 
-* [Esquemático no EasyEDA](https://github.com/DebbieMatt/TRATOR_GPS_DESVIO_OBSTACULO/blob/bb90522784f75e6c5c9f031d65932581e6ad7325/Schematic_carro-gps_2025-07-30.pdf).
+* [Esquemático no Cirkit Designer IDE]();
+* [Esquemático no Circuito.io](https://www.circuito.io/app?components=513,11028,13959,360217,975601,1671987,7654321); 
+* [Esquemático no EasyEDA](https://github.com/DebbieMatt/TRATOR_GPS_DESVIO_OBSTACULO/blob/acbd88e0e9cd93e092cadc461c549b807c64c717/Schematic_carro-gps_2025-09-10.pdf).
 
 ## Relacionados
 
