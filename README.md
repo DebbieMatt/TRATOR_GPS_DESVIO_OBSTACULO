@@ -18,26 +18,23 @@ Certifique-se de ter instalado as versões utilizadas a baixa para o bom funcion
 | TinyGPS++.h              |  3.3.0 | [link](https://github.com/TinyGPS.git)|
 | ESP32Servo.h             |  1.2.2 | [link](https://github.com/ESP32Servo.git)|
 
-## Funcionalidades atuais
+# Referência do Circuito Elétrico do Trator/Carro guiado por GPS
 
-Esquematico das funcionalidades: 
-
-* [Esquemático no Cirkit Designer IDE]();
-* [Esquemático no Circuito.io](https://www.circuito.io/app?components=513,11028,13959,360217,975601,1671987,7654321); 
-* [Esquemático no EasyEDA](https://github.com/DebbieMatt/TRATOR_GPS_DESVIO_OBSTACULO/blob/acbd88e0e9cd93e092cadc461c549b807c64c717/Schematic_carro-gps_2025-09-10.pdf).
+> Nestes links a seguir, há as conexões elétricas que embazei o circuito.
 
 ## Relacionados
 
 Segue alguns projetos relacionados, utilizados de referência:
 
 - [ESP32 with NEO-6M GPS Module (Arduino IDE)](https://randomnerdtutorials.com/esp32-neo-6m-gps-module-arduino/);
-- [HC-SR04 com ESP32 - Curso ESP32 básico](https://portal.vidadesilicio.com.br/hc-sr04-com-esp32/)
-- [How To Make A DIY Arduino Obstacle Avoiding Car At Home](https://youtu.be/1n_KjpMfVT0?si=jYDpIgPwvrgBudlv)
-- [ESP32 RC Car With Robotic Arm](https://www.hackster.io/pius4109/esp32-rc-car-with-robotic-arm-92a909)
-
-# Referência do Circuito Elétrico do Trator/Carro guiado por GPS
-
-> Nestes links a seguir, há as conexões elétricas que embazei o circuito.
+- [HC-SR04 com ESP32 - Curso ESP32 básico](https://portal.vidadesilicio.com.br/hc-sr04-com-esp32/);
+- [How To Make A DIY Arduino Obstacle Avoiding Car At Home](https://youtu.be/1n_KjpMfVT0?si=jYDpIgPwvrgBudlv);
+- [ESP32 RC Car With Robotic Arm](https://www.hackster.io/pius4109/esp32-rc-car-with-robotic-arm-92a909);
+- [Projeto Arduino GPS 6M Registrando Localização](https://www.usinainfo.com.br/blog/projeto-arduino-gps-6m-registrando-localizacao/?srsltid=AfmBOorf6NGnJXFNIinHmW70cq8d0DdjLepwwEQa4Aw71TsNTiIhAo80);
+- [ESP32: Guide for MicroSD Card Module using Arduino IDE](https://randomnerdtutorials.com/esp32-microsd-card-arduino/);
+- [MicroSD Card Interfacing with ESP32](https://www.electronicwings.com/esp32/microsd-card-interfacing-with-esp32);
+- [Interface L298N DC Motor Driver Module with Arduino](https://lastminuteengineers.com/l298n-dc-stepper-driver-arduino-tutorial/);
+- [ESP32 Remote-Controlled Wi-Fi Car Robot (Arduino IDE)](https://randomnerdtutorials.com/esp32-wi-fi-car-robot-arduino/).
 
 ### Softwares/requisitos para ver os arquivos 
 
@@ -47,6 +44,14 @@ O projeto foi desenvolvido, utilizando:
 - [x] EasyEDA Design
 - [x] Proteus
 - [x] Cirkit Designer IDE 
+
+## Funcionalidades atuais
+
+Esquematico das funcionalidades: 
+
+* [Esquemático no Cirkit Designer IDE]();
+* [Esquemático no Circuito.io](https://www.circuito.io/app?components=513,11028,13959,360217,975601,1671987,7654321); 
+* [Esquemático no EasyEDA](https://github.com/DebbieMatt/TRATOR_GPS_DESVIO_OBSTACULO/blob/acbd88e0e9cd93e092cadc461c549b807c64c717/Schematic_carro-gps_2025-09-10.pdf).
 
 ## 🤝 Criadora e Colaboradora do Trator 
 
