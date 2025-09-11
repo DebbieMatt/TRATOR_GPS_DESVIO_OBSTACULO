@@ -1,0 +1,926 @@
+#include "BluetoothSerial.h"
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+#include <TinyGPS++.h>
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+
+// Verificar se o ESP32 suporta Bluetooth
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
+#endif
+
+// Motor control pins - Ponte H
+#define MOTOR_FRONT_PIN1 25  // OUT1 da ponte H (motores dianteiros)
+#define MOTOR_FRONT_PIN2 33  // OUT2 da ponte H (motores dianteiros)
+#define MOTOR_REAR_PIN1 32   // OUT3 da ponte H (motores traseiros)
+#define MOTOR_REAR_PIN2 35   // OUT4 da ponte H (motores traseiros)
+
+// PINS PARA ENABLE DA PONTE H (MUITO IMPORTANTE!)
+#define MOTOR_FRONT_ENABLE 26  // Enable para motores dianteiros
+#define MOTOR_REAR_ENABLE 27   // Enable para motores traseiros
+
+// Pinos do cartão SD
+#define SD_CS 5
+#define SD_MOSI 23
+#define SD_MISO 19
+#define SD_SCK 18
+
+// Pinos GPS
+#define RXD2 16
+#define TXD2 17
+#define GPS_BAUD 9600
+
+// Pinos Sensor Ultrassônico e LED
+#define PINO_TRIG 4  // Pino D4 conectado ao TRIG do HC-SR04
+#define PINO_ECHO 2  // Pino D2 conectado ao ECHO do HC-SR04
+#define PINO_LED 13  // Pino do LED indicador
+
+// Objetos globais
+BluetoothSerial SerialBT;
+Adafruit_MPU6050 mpu;
+File logFile;
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(2);
+
+// Variáveis de controle
+char comando = 'S';
+bool motorsEnabled = true;
+bool debugMode = true;
+bool mpuAvailable = false;
+bool sdCardAvailable = false;
+bool loggingEnabled = false;  // Será ativado automaticamente se SD estiver disponível
+bool gpsAvailable = false;
+
+// Nome do arquivo de log atual
+String currentLogFile = "";
+
+// Estrutura para dados dos sensores
+struct SensorData {
+    float accelX, accelY, accelZ;
+    float gyroX, gyroY, gyroZ;
+    float temperature;
+    float distance;
+};
+
+SensorData currentSensor = {0};
+
+// GPS data cache
+struct GPSData {
+    bool hasValidLocation = false;
+    double lat = 0.0;
+    double lng = 0.0;
+    double speed = 0.0;
+    double altitude = 0.0;
+    uint32_t hdop = 0;
+    uint32_t satellites = 0;
+} gpsData;
+
+// Timing variables
+unsigned long lastCommand = 0;
+unsigned long lastSensorRead = 0;
+unsigned long lastLogWrite = 0;
+unsigned long lastGpsUpdate = 0;
+unsigned long lastSensorUpdate = 0;
+unsigned long lastDistanceRead = 0;
+
+// Timing constants
+const int GPS_UPDATE_INTERVAL = 1000;      // ms
+const int SENSOR_UPDATE_INTERVAL = 100;    // ms
+const int DISTANCE_UPDATE_INTERVAL = 250;  // ms
+const int LOG_INTERVAL = 2000;             // ms - Intervalo para log automático
+const float DISTANCE_THRESHOLD = 15.0;     // cm
+
+void setup() {
+    Serial.begin(115200);
+    delay(1000);
+    
+    Serial.println("=== CARRINHO COMPLETO ESP32 V1.1 - AUTO LOGGING ===");
+    Serial.println("Iniciando diagnóstico do sistema...\n");
+    
+    // Initialize motor pins
+    setupMotors();
+    
+    // Initialize Bluetooth
+    setupBluetooth();
+    
+    // Initialize sensor pins
+    setupSensors();
+    
+    // Initialize GPS
+    setupGPS();
+    
+    // Initialize MPU6050
+    setupMPU();
+    
+    // Initialize SD Card (com auto-logging)
+    setupSDCardWithAutoLogging();
+    
+    // Teste inicial
+    Serial.println("\n=== TESTE INICIAL DOS MOTORES ===");
+    testAllMotors();
+    
+    if (mpuAvailable) {
+        Serial.println("\n=== TESTE INICIAL DOS SENSORES ===");
+        readSensors();
+    }
+    
+    // Log evento de inicialização
+    if (loggingEnabled) {
+        logSystemEvent("SYSTEM_START", "Sistema iniciado com sucesso");
+    }
+    
+    printCommands();
+}
+
+void loop() {
+    unsigned long currentTime = millis();
+    
+    // Handle commands from both Bluetooth and Serial
+    handleCommands();
+    
+    // Update ultrasonic sensor
+    if (currentTime - lastDistanceRead >= DISTANCE_UPDATE_INTERVAL) {
+        updateSonicSensor();
+        lastDistanceRead = currentTime;
+    }
+    
+    // Update MPU6050 sensors
+    if (mpuAvailable && currentTime - lastSensorRead >= SENSOR_UPDATE_INTERVAL) {
+        updateSensorData();
+        lastSensorRead = currentTime;
+    }
+    
+    // Update GPS data
+    if (gpsAvailable && currentTime - lastGpsUpdate >= GPS_UPDATE_INTERVAL) {
+        updateGPS();
+        lastGpsUpdate = currentTime;
+    }
+    
+    // Log data periodically (AUTO-LOGGING)
+    if (loggingEnabled && currentTime - lastLogWrite >= LOG_INTERVAL) {
+        logDataToSD();
+        lastLogWrite = currentTime;
+    }
+    
+    // Safety: Stop motors after 5 seconds without command
+    if (currentTime - lastCommand > 5000 && comando != 'S') {
+        stopAllMotors();
+        comando = 'S';
+        if (loggingEnabled) {
+            logSystemEvent("SAFETY_STOP", "Motores parados por timeout de segurança");
+        }
+        Serial.println("⚠️ TIMEOUT: Motores parados por segurança");
+    }
+    
+    delay(10); // Small delay for stability
+}
+
+// === SETUP FUNCTIONS ===
+
+void setupMotors() {
+    pinMode(MOTOR_FRONT_PIN1, OUTPUT);
+    pinMode(MOTOR_FRONT_PIN2, OUTPUT);
+    pinMode(MOTOR_REAR_PIN1, OUTPUT);
+    pinMode(MOTOR_REAR_PIN2, OUTPUT);
+    pinMode(MOTOR_FRONT_ENABLE, OUTPUT);
+    pinMode(MOTOR_REAR_ENABLE, OUTPUT);
+    
+    // Enable H-bridge
+    digitalWrite(MOTOR_FRONT_ENABLE, HIGH);
+    digitalWrite(MOTOR_REAR_ENABLE, HIGH);
+    
+    // Start with motors stopped
+    stopAllMotors();
+    
+    Serial.println("✓ Motores configurados e ponte H ativada");
+}
+
+void setupBluetooth() {
+    if (!SerialBT.begin("Carrinho_ESP32")) {
+        Serial.println("✗ ERRO: Bluetooth não inicializado!");
+    } else {
+        Serial.println("✓ Bluetooth iniciado: 'Carrinho_ESP32'");
+    }
+}
+
+void setupSensors() {
+    pinMode(PINO_TRIG, OUTPUT);
+    pinMode(PINO_ECHO, INPUT);
+    pinMode(PINO_LED, OUTPUT);
+    digitalWrite(PINO_LED, LOW);
+    Serial.println("✓ Sensor ultrassônico configurado");
+}
+
+void setupGPS() {
+    gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
+    
+    // Check if GPS is responding
+    unsigned long startTime = millis();
+    while (millis() - startTime < 2000) {
+        if (gpsSerial.available()) {
+            gpsAvailable = true;
+            break;
+        }
+    }
+    
+    if (gpsAvailable) {
+        Serial.println("✓ GPS inicializado");
+    } else {
+        Serial.println("✗ GPS não detectado (verifique conexões)");
+    }
+}
+
+void setupMPU() {
+    if (mpu.begin()) {
+        mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+        mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+        mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+        mpuAvailable = true;
+        
+        Serial.println("✓ MPU6050 encontrado e configurado");
+        Serial.println("  Calibrando MPU6050...");
+        delay(1000);
+        updateSensorData();
+        Serial.println("  ✓ MPU6050 calibrado");
+    } else {
+        Serial.println("✗ MPU6050 não encontrado");
+        mpuAvailable = false;
+    }
+}
+
+void setupSDCardWithAutoLogging() {
+    Serial.println("Inicializando SD Card com Auto-Logging...");
+    
+    SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    if (SD.begin(SD_CS)) {
+        sdCardAvailable = true;
+        Serial.println("✓ Cartão SD inicializado");
+        
+        // Criar nome do arquivo baseado no timestamp
+        String timestamp = String(millis() / 1000);
+        currentLogFile = "/carrinho_log_" + timestamp + ".csv";
+        
+        // Criar arquivo de log com cabeçalhos
+        logFile = SD.open(currentLogFile, FILE_WRITE);
+        if (logFile) {
+            // Cabeçalho do arquivo CSV
+            logFile.println("timestamp_ms,uptime_s,event_type,command,accelX,accelY,accelZ,gyroX,gyroY,gyroZ,temp_c,distance_cm,gps_lat,gps_lng,gps_speed_kmh,gps_alt_m,gps_sats,notes");
+            logFile.close();
+            
+            // ATIVAR AUTO-LOGGING automaticamente
+            loggingEnabled = true;
+            
+            Serial.println("  ✓ Arquivo de log criado: " + currentLogFile);
+            Serial.println("  🟢 AUTO-LOGGING ATIVADO automaticamente!");
+            
+            // Log evento de inicialização do SD
+            logSystemEvent("SD_INIT", "SD Card inicializado e logging ativado");
+            
+        } else {
+            Serial.println("  ✗ Erro ao criar arquivo de log");
+            sdCardAvailable = false;
+        }
+    } else {
+        Serial.println("✗ Cartão SD não encontrado - Auto-logging desabilitado");
+        sdCardAvailable = false;
+        loggingEnabled = false;
+    }
+    
+    // Mostrar status do logging
+    Serial.print("📝 Status do Logging: ");
+    Serial.println(loggingEnabled ? "🟢 ATIVO" : "🔴 INATIVO");
+}
+
+void printCommands() {
+    Serial.println("\n=== SISTEMA PRONTO ===");
+    if (loggingEnabled) {
+        Serial.println("🟢 AUTO-LOGGING ATIVO - Registrando eventos automaticamente!");
+    }
+    Serial.println("\n📱 COMANDOS DISPONÍVEIS:");
+    Serial.println("┌─────────────────────────────────────┐");
+    Serial.println("│ MOVIMENTO:                          │");
+    Serial.println("│  F - Frente    B - Ré               │");
+    Serial.println("│  L - Esquerda  R - Direita          │");
+    Serial.println("│  S - Parar     N - Neutro           │");
+    Serial.println("├─────────────────────────────────────┤");
+    Serial.println("│ SISTEMA:                            │");
+    Serial.println("│  T - Teste motores                  │");
+    Serial.println("│  D - Debug ON/OFF                   │");
+    Serial.println("│  E - Enable motores ON/OFF          │");
+    Serial.println("├─────────────────────────────────────┤");
+    Serial.println("│ SENSORES:                           │");
+    Serial.println("│  M - Status MPU6050                 │");
+    Serial.println("│  A - Ler todos sensores             │");
+    Serial.println("│  G - Status GPS                     │");
+    Serial.println("│  U - Ler distância ultrassônica     │");
+    Serial.println("├─────────────────────────────────────┤");
+    Serial.println("│ ARMAZENAMENTO:                      │");
+    Serial.println("│  C - Status SD Card                 │");
+    Serial.println("│  O - Toggle logging ON/OFF          │");
+    Serial.println("│  W - Escrever log manual            │");
+    Serial.println("├─────────────────────────────────────┤");
+    Serial.println("│ DIAGNÓSTICO:                        │");
+    Serial.println("│  P - Estado dos pinos               │");
+    Serial.println("│  V - Status completo do sistema     │");
+    Serial.println("└─────────────────────────────────────┘");
+    Serial.println("\nEnvie comandos via Bluetooth ou Serial");
+    Serial.println("====================================\n");
+}
+
+// === COMMAND HANDLING ===
+
+void handleCommands() {
+    char newCommand = 0;
+    String source = "";
+    
+    if (SerialBT.available()) {
+        newCommand = SerialBT.read();
+        source = "BT";
+        Serial.print("📱 BT: ");
+    } else if (Serial.available()) {
+        newCommand = Serial.read();
+        source = "Serial";
+        Serial.print("💻 Serial: ");
+    }
+    
+    if (newCommand != 0 && newCommand != '\n' && newCommand != '\r') {
+        lastCommand = millis();
+        processCommand(newCommand, source);
+    }
+}
+
+void processCommand(char cmd, String source) {
+    Serial.print("Comando '");
+    Serial.print(cmd);
+    Serial.println("' recebido");
+    
+    comando = cmd;
+    
+    // Log do comando recebido
+    if (loggingEnabled) {
+        logCommand(String(cmd), "CMD_" + source + "_" + String(cmd));
+    }
+    
+    switch (toupper(cmd)) {
+        // Movement commands
+        case 'F': moveForward(); break;
+        case 'B': moveBackward(); break;
+        case 'L': turnLeft(); break;
+        case 'R': turnRight(); break;
+        case 'S': stopAllMotors(); break;
+        case 'N': setNeutral(); break;
+        
+        // System commands
+        case 'T': testAllMotors(); break;
+        case 'D': toggleDebug(); break;
+        case 'E': toggleMotors(); break;
+        
+        // Sensor commands
+        case 'M': mpuStatus(); break;
+        case 'A': readAllSensors(); break;
+        case 'G': gpsStatus(); break;
+        case 'U': readUltrasonic(); break;
+        
+        // Storage commands
+        case 'C': sdStatus(); break;
+        case 'O': toggleLogging(); break;
+        case 'W': forceLogWrite(); break;
+        
+        // Diagnostic commands
+        case 'P': testPins(); break;
+        case 'V': systemStatus(); break;
+        
+        default:
+            Serial.println("✗ Comando inválido! Use 'V' para ver comandos.");
+            if (loggingEnabled) {
+                logSystemEvent("INVALID_CMD", "Comando inválido: " + String(cmd));
+            }
+            break;
+    }
+}
+
+// === MOVEMENT FUNCTIONS ===
+
+void setFrontMotors(int pin1State, int pin2State) {
+    digitalWrite(MOTOR_FRONT_PIN1, pin1State);
+    digitalWrite(MOTOR_FRONT_PIN2, pin2State);
+    
+    if (debugMode) {
+        Serial.print("  🔧 Front: P1=");
+        Serial.print(pin1State);
+        Serial.print(" P2=");
+        Serial.println(pin2State);
+    }
+}
+
+void setRearMotors(int pin1State, int pin2State) {
+    digitalWrite(MOTOR_REAR_PIN1, pin1State);
+    digitalWrite(MOTOR_REAR_PIN2, pin2State);
+    
+    if (debugMode) {
+        Serial.print("  🔧 Rear: P1=");
+        Serial.print(pin1State);
+        Serial.print(" P2=");
+        Serial.println(pin2State);
+    }
+}
+
+void moveForward() {
+    if (!motorsEnabled) {
+        Serial.println("⚠️ Motores desabilitados!");
+        if (loggingEnabled) {
+            logSystemEvent("MOTOR_DISABLED", "Tentativa de movimento com motores desabilitados");
+        }
+        return;
+    }
+    
+    // Check for obstacles
+    if (currentSensor.distance > 0 && currentSensor.distance < DISTANCE_THRESHOLD) {
+        Serial.println("⚠️ Obstáculo detectado! Parando...");
+        stopAllMotors();
+        if (loggingEnabled) {
+            logSystemEvent("OBSTACLE_STOP", "Obstáculo detectado a " + String(currentSensor.distance) + "cm");
+        }
+        return;
+    }
+    
+    Serial.println("⬆️ MOVENDO PARA FRENTE");
+    setFrontMotors(LOW, HIGH);
+    setRearMotors(LOW, HIGH);
+    
+    if (loggingEnabled) {
+        logSystemEvent("MOVE_FORWARD", "Movimento para frente iniciado");
+    }
+}
+
+void moveBackward() {
+    if (!motorsEnabled) {
+        Serial.println("⚠️ Motores desabilitados!");
+        if (loggingEnabled) {
+            logSystemEvent("MOTOR_DISABLED", "Tentativa de movimento com motores desabilitados");
+        }
+        return;
+    }
+    
+    Serial.println("⬇️ MOVENDO PARA TRÁS");
+    setFrontMotors(HIGH, LOW);
+    setRearMotors(HIGH, LOW);
+    
+    if (loggingEnabled) {
+        logSystemEvent("MOVE_BACKWARD", "Movimento para trás iniciado");
+    }
+}
+
+void turnLeft() {
+    if (!motorsEnabled) {
+        Serial.println("⚠️ Motores desabilitados!");
+        if (loggingEnabled) {
+            logSystemEvent("MOTOR_DISABLED", "Tentativa de movimento com motores desabilitados");
+        }
+        return;
+    }
+    
+    Serial.println("⬅️ VIRANDO ESQUERDA");
+    setFrontMotors(LOW, HIGH);
+    setRearMotors(HIGH, LOW);
+    
+    if (loggingEnabled) {
+        logSystemEvent("TURN_LEFT", "Curva à esquerda iniciada");
+    }
+}
+
+void turnRight() {
+    if (!motorsEnabled) {
+        Serial.println("⚠️ Motores desabilitados!");
+        if (loggingEnabled) {
+            logSystemEvent("MOTOR_DISABLED", "Tentativa de movimento com motores desabilitados");
+        }
+        return;
+    }
+    
+    Serial.println("➡️ VIRANDO DIREITA");
+    setFrontMotors(HIGH, LOW);
+    setRearMotors(LOW, HIGH);
+    
+    if (loggingEnabled) {
+        logSystemEvent("TURN_RIGHT", "Curva à direita iniciada");
+    }
+}
+
+void stopAllMotors() {
+    Serial.println("⏹️ PARANDO MOTORES");
+    setFrontMotors(LOW, LOW);
+    setRearMotors(LOW, LOW);
+    comando = 'S';
+    
+    if (loggingEnabled) {
+        logSystemEvent("MOTORS_STOP", "Todos os motores parados");
+    }
+}
+
+void setNeutral() {
+    Serial.println("🔄 PONTO MORTO");
+    setFrontMotors(LOW, LOW);
+    setRearMotors(LOW, LOW);
+    
+    if (loggingEnabled) {
+        logSystemEvent("NEUTRAL", "Motores em ponto morto");
+    }
+}
+
+// === SENSOR FUNCTIONS ===
+
+void updateSonicSensor() {
+    digitalWrite(PINO_TRIG, LOW);
+    delayMicroseconds(2);
+    digitalWrite(PINO_TRIG, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(PINO_TRIG, LOW);
+    
+    long duracao = pulseIn(PINO_ECHO, HIGH, 30000);
+    
+    if (duracao > 0) {
+        float newDistance = (duracao * 0.0343) / 2.0;
+        
+        // Log mudanças significativas na distância
+        if (loggingEnabled && abs(newDistance - currentSensor.distance) > 2.0) {
+            logSystemEvent("DISTANCE_CHANGE", "Distância mudou de " + String(currentSensor.distance) + " para " + String(newDistance) + "cm");
+        }
+        
+        currentSensor.distance = newDistance;
+        
+        // Update LED
+        digitalWrite(PINO_LED, (currentSensor.distance <= DISTANCE_THRESHOLD) ? HIGH : LOW);
+        
+        // Auto-stop if obstacle detected while moving forward
+        if (currentSensor.distance <= DISTANCE_THRESHOLD && comando == 'F') {
+            stopAllMotors();
+            Serial.println("🛑 OBSTÁCULO! Distância: " + String(currentSensor.distance) + " cm");
+            if (loggingEnabled) {
+                logSystemEvent("EMERGENCY_STOP", "Parada de emergência - obstáculo a " + String(currentSensor.distance) + "cm");
+            }
+        }
+    }
+}
+
+void readUltrasonic() {
+    updateSonicSensor();
+    Serial.print("📏 Distância: ");
+    Serial.print(currentSensor.distance, 1);
+    Serial.println(" cm");
+    
+    if (currentSensor.distance <= DISTANCE_THRESHOLD) {
+        Serial.println("⚠️ OBSTÁCULO PRÓXIMO!");
+    }
+}
+
+void updateSensorData() {
+    if (!mpuAvailable) return;
+    
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    
+    currentSensor.accelX = a.acceleration.x;
+    currentSensor.accelY = a.acceleration.y;
+    currentSensor.accelZ = a.acceleration.z;
+    currentSensor.gyroX = g.gyro.x;
+    currentSensor.gyroY = g.gyro.y;
+    currentSensor.gyroZ = g.gyro.z;
+    currentSensor.temperature = temp.temperature;
+}
+
+void readSensors() {
+    if (!mpuAvailable) {
+        Serial.println("⚠️ MPU6050 não disponível!");
+        return;
+    }
+    
+    updateSensorData();
+    
+    Serial.println("\n📊 === LEITURA MPU6050 ===");
+    Serial.println("🏃 ACELERÔMETRO (m/s²):");
+    Serial.printf("  X: %.2f  Y: %.2f  Z: %.2f\n", 
+        currentSensor.accelX, currentSensor.accelY, currentSensor.accelZ);
+    
+    Serial.println("🌀 GIROSCÓPIO (rad/s):");
+    Serial.printf("  X: %.2f  Y: %.2f  Z: %.2f\n",
+        currentSensor.gyroX, currentSensor.gyroY, currentSensor.gyroZ);
+    
+    Serial.printf("🌡️ TEMPERATURA: %.1f°C\n", currentSensor.temperature);
+    
+    float totalAccel = sqrt(pow(currentSensor.accelX, 2) + 
+                           pow(currentSensor.accelY, 2) + 
+                           pow(currentSensor.accelZ, 2));
+    Serial.printf("📈 Aceleração total: %.2f m/s²\n", totalAccel);
+}
+
+void readAllSensors() {
+    Serial.println("\n=== LEITURA COMPLETA DOS SENSORES ===");
+    
+    if (mpuAvailable) {
+        readSensors();
+    }
+    
+    readUltrasonic();
+    
+    if (gpsAvailable && gpsData.hasValidLocation) {
+        printGPSData();
+    } else {
+        Serial.println("📍 GPS: Sem sinal");
+    }
+    
+    if (loggingEnabled) {
+        logSystemEvent("SENSOR_READ", "Leitura completa de sensores solicitada");
+    }
+}
+
+// === GPS FUNCTIONS ===
+
+void updateGPS() {
+    if (!gpsAvailable) return;
+    
+    while (gpsSerial.available() > 0) {
+        if (gps.encode(gpsSerial.read())) {
+            if (gps.location.isUpdated()) {
+                bool wasValid = gpsData.hasValidLocation;
+                gpsData.hasValidLocation = true;
+                gpsData.lat = gps.location.lat();
+                gpsData.lng = gps.location.lng();
+                gpsData.speed = gps.speed.kmph();
+                gpsData.altitude = gps.altitude.meters();
+                gpsData.hdop = gps.hdop.value();
+                gpsData.satellites = gps.satellites.value();
+                
+                // Log quando GPS obtém primeira localização válida
+                if (!wasValid && loggingEnabled) {
+                    logSystemEvent("GPS_LOCK", "GPS obteve primeira localização válida");
+                }
+            }
+        }
+    }
+}
+
+void printGPSData() {
+    if (!gpsData.hasValidLocation) {
+        Serial.println("📍 GPS: Aguardando sinal...");
+        return;
+    }
+    
+    Serial.println("📍 === DADOS GPS ===");
+    Serial.printf("  Lat: %.6f | Lng: %.6f\n", gpsData.lat, gpsData.lng);
+    Serial.printf("  Velocidade: %.1f km/h | Alt: %.1f m\n", gpsData.speed, gpsData.altitude);
+    Serial.printf("  Satélites: %d | HDOP: %.1f\n", gpsData.satellites, gpsData.hdop / 100.0);
+}
+
+void gpsStatus() {
+    Serial.println("\n🛰️ === STATUS GPS ===");
+    Serial.print("GPS disponível: ");
+    Serial.println(gpsAvailable ? "✓ SIM" : "✗ NÃO");
+    
+    if (gpsAvailable) {
+        Serial.print("Sinal válido: ");
+        Serial.println(gpsData.hasValidLocation ? "✓ SIM" : "✗ NÃO");
+        
+        if (gpsData.hasValidLocation) {
+            printGPSData();
+        }
+    }
+}
+
+// === SD CARD FUNCTIONS ===
+
+void logCommand(String command, String eventType) {
+    if (!sdCardAvailable || !loggingEnabled) return;
+    
+    writeLogEntry(eventType, command, "Comando executado");
+}
+
+void logSystemEvent(String eventType, String notes) {
+    if (!sdCardAvailable || !loggingEnabled) return;
+    
+    writeLogEntry(eventType, String(comando), notes);
+}
+
+void writeLogEntry(String eventType, String command, String notes) {
+    if (!sdCardAvailable || !loggingEnabled) return;
+    
+    logFile = SD.open(currentLogFile, FILE_APPEND);
+    
+    if (logFile) {
+        // Formato: timestamp_ms,uptime_s,event_type,command,accelX,accelY,accelZ,gyroX,gyroY,gyroZ,temp_c,distance_cm,gps_lat,gps_lng,gps_speed_kmh,gps_alt_m,gps_sats,notes
+        
+        String logEntry = String(millis()) + "," + String(millis()/1000) + ",";
+        logEntry += eventType + "," + command + ",";
+        logEntry += String(currentSensor.accelX, 2) + ",";
+        logEntry += String(currentSensor.accelY, 2) + ",";
+        logEntry += String(currentSensor.accelZ, 2) + ",";
+        logEntry += String(currentSensor.gyroX, 2) + ",";
+        logEntry += String(currentSensor.gyroY, 2) + ",";
+        logEntry += String(currentSensor.gyroZ, 2) + ",";
+        logEntry += String(currentSensor.temperature, 1) + ",";
+        logEntry += String(currentSensor.distance, 1) + ",";
+        logEntry += String(gpsData.lat, 6) + ",";
+        logEntry += String(gpsData.lng, 6) + ",";
+        logEntry += String(gpsData.speed, 1) + ",";
+        logEntry += String(gpsData.altitude, 1) + ",";
+        logEntry += String(gpsData.satellites) + ",";
+        logEntry += "\"" + notes + "\"";
+        
+        logFile.println(logEntry);
+        logFile.close();
+        
+        if (debugMode) {
+            Serial.println("📝 Log escrito: " + eventType);
+        }
+    } else {
+        Serial.println("⚠️ Erro ao escrever log!");
+    }
+}
+
+void logDataToSD() {
+    logSystemEvent("AUTO_LOG", "Log automático de dados dos sensores");
+}
+
+void forceLogWrite() {
+    if (!sdCardAvailable) {
+        Serial.println("⚠️ SD Card não disponível!");
+        return;
+    }
+    
+    logSystemEvent("MANUAL_LOG", "Log manual forçado pelo usuário");
+    Serial.println("📝 Log manual escrito com sucesso!");
+}
+
+void sdStatus() {
+    Serial.println("\n💾 === STATUS SD CARD ===");
+    Serial.print("SD Card disponível: ");
+    Serial.println(sdCardAvailable ? "✓ SIM" : "✗ NÃO");
+    
+    if (sdCardAvailable) {
+        uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+        uint64_t usedBytes = SD.usedBytes() / (1024 * 1024);
+        
+        Serial.printf("  Tamanho: %llu MB\n", cardSize);
+        Serial.printf("  Usado: %llu MB\n", usedBytes);
+        Serial.printf("  Livre: %llu MB\n", cardSize - usedBytes);
+        Serial.println("  Arquivo atual: " + currentLogFile);
+        Serial.print("  Auto-logging: ");
+        Serial.println(loggingEnabled ? "🟢 ATIVO" : "🔴 INATIVO");
+    }
+}
+
+// === SYSTEM FUNCTIONS ===
+
+void toggleDebug() {
+    debugMode = !debugMode;
+    Serial.print("🔧 Modo Debug: ");
+    Serial.println(debugMode ? "ATIVADO" : "DESATIVADO");
+    
+    if (loggingEnabled) {
+        logSystemEvent("DEBUG_TOGGLE", debugMode ? "Debug ativado" : "Debug desativado");
+    }
+}
+
+void toggleMotors() {
+    motorsEnabled = !motorsEnabled;
+    digitalWrite(MOTOR_FRONT_ENABLE, motorsEnabled ? HIGH : LOW);
+    digitalWrite(MOTOR_REAR_ENABLE, motorsEnabled ? HIGH : LOW);
+    
+    Serial.print("⚙️ Motores: ");
+    Serial.println(motorsEnabled ? "HABILITADOS" : "DESABILITADOS");
+    
+    if (!motorsEnabled) {
+        stopAllMotors();
+    }
+    
+    if (loggingEnabled) {
+        logSystemEvent("MOTOR_TOGGLE", motorsEnabled ? "Motores habilitados" : "Motores desabilitados");
+    }
+}
+
+void toggleLogging() {
+    if (!sdCardAvailable) {
+        Serial.println("⚠️ SD Card não disponível para logging!");
+        return;
+    }
+    
+    loggingEnabled = !loggingEnabled;
+    Serial.print("📝 Logging: ");
+    Serial.println(loggingEnabled ? "🟢 ATIVADO" : "🔴 DESATIVADO");
+    
+    // Log o próprio evento de toggle (só se estiver ativando)
+    if (loggingEnabled) {
+        logSystemEvent("LOGGING_ENABLED", "Sistema de logging reativado pelo usuário");
+    }
+}
+
+void mpuStatus() {
+    Serial.println("\n🔍 === STATUS MPU6050 ===");
+    Serial.print("MPU6050 disponível: ");
+    Serial.println(mpuAvailable ? "✓ SIM" : "✗ NÃO");
+    
+    if (mpuAvailable) {
+        Serial.println("Configurações:");
+        Serial.println("  Range: ±2G / ±250°/s");
+        Serial.println("  Filtro: 21Hz");
+        Serial.println("  I2C: SDA=21, SCL=22");
+        readSensors();
+    }
+    
+    if (loggingEnabled) {
+        logSystemEvent("MPU_STATUS", "Verificação de status do MPU6050");
+    }
+}
+
+void testPins() {
+    Serial.println("\n🔌 === TESTE DE PINOS ===");
+    
+    Serial.println("MOTORES:");
+    Serial.printf("  Front Enable (26): %s\n", digitalRead(MOTOR_FRONT_ENABLE) ? "HIGH" : "LOW");
+    Serial.printf("  Rear Enable (27): %s\n", digitalRead(MOTOR_REAR_ENABLE) ? "HIGH" : "LOW");
+    Serial.printf("  Front P1 (25): %s\n", digitalRead(MOTOR_FRONT_PIN1) ? "HIGH" : "LOW");
+    Serial.printf("  Front P2 (33): %s\n", digitalRead(MOTOR_FRONT_PIN2) ? "HIGH" : "LOW");
+    Serial.printf("  Rear P1 (32): %s\n", digitalRead(MOTOR_REAR_PIN1) ? "HIGH" : "LOW");
+    Serial.printf("  Rear P2 (35): %s\n", digitalRead(MOTOR_REAR_PIN2) ? "HIGH" : "LOW");
+    
+    Serial.println("SENSORES:");
+    Serial.printf("  LED (13): %s\n", digitalRead(PINO_LED) ? "HIGH" : "LOW");
+    Serial.printf("  Trig (4): %s\n", digitalRead(PINO_TRIG) ? "HIGH" : "LOW");
+    
+    if (loggingEnabled) {
+        logSystemEvent("PIN_TEST", "Teste de estado dos pinos realizado");
+    }
+}
+
+void systemStatus() {
+    Serial.println("\n=== STATUS COMPLETO DO SISTEMA ===");
+    Serial.println("┌─────────────────────────────────┐");
+    Serial.printf("│ 🔋 Uptime: %lu segundos        │\n", millis() / 1000);
+    Serial.printf("│ 📱 Bluetooth: %s              │\n", SerialBT.hasClient() ? "Conectado  " : "Aguardando ");
+    Serial.printf("│ ⚙️  Motores: %s              │\n", motorsEnabled ? "Habilitados" : "Desabilitados");
+    Serial.printf("│ 🧭 MPU6050: %s               │\n", mpuAvailable ? "OK         " : "Não encontr");
+    Serial.printf("│ 📍 GPS: %s                   │\n", gpsAvailable ? (gpsData.hasValidLocation ? "OK + LOCK  " : "OK s/ LOCK ") : "Não encontr");
+    Serial.printf("│ 💾 SD Card: %s               │\n", sdCardAvailable ? "OK         " : "Não encontr");
+    Serial.printf("│ 📝 Logging: %s               │\n", loggingEnabled ? "🟢 ATIVO   " : "🔴 INATIVO ");
+    Serial.printf("│ 🔧 Debug: %s                 │\n", debugMode ? "ON         " : "OFF        ");
+    Serial.printf("│ 📏 Distância: %.1f cm        │\n", currentSensor.distance);
+    Serial.printf("│ 🚗 Comando atual: %c         │\n", comando);
+    if (loggingEnabled) {
+        Serial.printf("│ 📄 Arquivo log: %s│\n", currentLogFile.length() > 15 ? (currentLogFile.substring(0,15) + "...").c_str() : currentLogFile.c_str());
+    }
+    Serial.println("└─────────────────────────────────┘");
+    
+    if (loggingEnabled) {
+        Serial.println("\n🟢 AUTO-LOGGING ATIVO!");
+        Serial.println("   ⏰ Intervalo: " + String(LOG_INTERVAL/1000) + " segundos");
+        Serial.println("   📊 Registrando: Comandos, sensores, GPS, eventos");
+        Serial.println("   📂 Arquivo: " + currentLogFile);
+    }
+    
+    if (loggingEnabled) {
+        logSystemEvent("STATUS_CHECK", "Verificação completa do sistema realizada");
+    }
+}
+
+void testAllMotors() {
+    if (!motorsEnabled) {
+        Serial.println("⚠️ Habilitando motores para teste...");
+        motorsEnabled = true;
+        digitalWrite(MOTOR_FRONT_ENABLE, HIGH);
+        digitalWrite(MOTOR_REAR_ENABLE, HIGH);
+    }
+    
+    Serial.println("🧪 Iniciando teste de motores...");
+    
+    if (loggingEnabled) {
+        logSystemEvent("MOTOR_TEST_START", "Iniciando sequência de teste dos motores");
+    }
+    
+    Serial.println("1. Teste FRENTE (2s)...");
+    moveForward();
+    delay(2000);
+    
+    Serial.println("2. Teste RÉ (2s)...");
+    moveBackward();
+    delay(2000);
+    
+    Serial.println("3. Teste ESQUERDA (1.5s)...");
+    turnLeft();
+    delay(1500);
+    
+    Serial.println("4. Teste DIREITA (1.5s)...");
+    turnRight();
+    delay(1500);
+    
+    Serial.println("5. PARANDO...");
+    stopAllMotors();
+    
+    Serial.println("✅ Teste concluído!");
+    
+    if (loggingEnabled) {
+        logSystemEvent("MOTOR_TEST_END", "Sequência de teste dos motores concluída com sucesso");
+    }
+}
