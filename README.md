@@ -15,8 +15,14 @@ Certifique-se de ter instalado as versões utilizadas a baixa para o bom funcion
 
 | Biblioteca               | Versão |                   link                      |
 | ------------------------ | -------|---------------------------------------------|
-| TinyGPS++.h              |  3.3.0 | [link](https://github.com/TinyGPS.git)|
-| ESP32Servo.h             |  1.2.2 | [link](https://github.com/ESP32Servo.git)|
+| TinyGPS++.h              | 3.3.0  | [link](https://github.com/TinyGPS.git)|
+| Adafruit_MPU6050.h       | 2.2.6  | [link](https://github.com/adafruit/Adafruit_MPU6050.git)|
+| Adafruit_Sensor.h        | 1.1.15 | [link](https://github.com/adafruit/Adafruit_Sensor.git)|
+| Wire.h                   | 4.1.0  | [link](https://github.com/PaulStoffregen/Wire)|
+| BluetoothSerial.h        | 1.1.0  | [link](https://github.com/hen1227/bluetooth-serial)|
+| FS.h                     | 2.1.3  | [link](https://github.com/Seeed-Studio/Seeed_Arduino_FS)|
+| SD.h                     | 1.3.0  | [link](https://github.com/arduino-libraries/SD)|
+| SPI.h                    | 3.0.0  | [link](https://github.com/PaulStoffregen/SPI)|
 
 # Referência do Circuito Elétrico do Trator/Carro guiado por GPS
 
