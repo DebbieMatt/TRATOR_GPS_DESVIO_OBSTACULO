@@ -63,11 +63,12 @@ GND  → GND
 
 📊 RESUMO DE PINAGEM ESP32
 
-Componente Pinos ESP32 Utilizados Função
-Ponte H L298N 25, 33, 26, 32, 35, 27 Controle de motores
-Sensor Ultrassônico 4, 2 Detecção obstáculos
-GPS NEO-8M 16, 17 Navegação
-MPU-6050 22, 21 Orientação
-Cartão SD 5, 23, 19, 18 Log de dados
+Componente | Pinos Utilizados |Função |             
+| ------------------------ | -------|---------------------------------------------|
+| Ponte H L298N | 25, 33, 26, 32, 35, 27 | Controle de motores |
+| Sensor Ultrassônico | 4, 2 | Detecção obstáculos |
+| GPS NEO-8M | 16, 17 | Navegação |
+| MPU-6050  | 22, 21 | Orientação |
+| Cartão SD | 5, 23, 19, 18 | Log de dados |
 
 Esta configuração mantém todos os componentes essenciais para um carro autônomo com GPS e desvio de obstáculos! 🚗💨
