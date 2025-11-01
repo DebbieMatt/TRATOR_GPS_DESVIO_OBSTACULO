@@ -92,8 +92,8 @@ O projeto inclui esquemáticos desenvolvidos em diferentes ferramentas:
 
 - **Circuito.io**: [Visualizar Esquemático](https://www.circuito.io/app?components=513,11028,13959,360217,975601,1671987,7654321)
 - **EasyEDA**: [Ver PDF](https://github.com/DebbieMatt/TRATOR_GPS_DESVIO_OBSTACULO/blob/acbd88e0e9cd93e092cadc461c549b807c64c717/Schematic_carro-gps_2025-09-10.pdf)
-- **Cirkit Designer IDE**: Em desenvolvimento
-- **Proteus**: Em desenvolvimento
+- **Cirkit Designer IDE**: [Visualizar simulação]()
+- **Proteus**: [Simulação do circuito](https://github.com/DebbieMatt/TRATOR_GPS_DESVIO_OBSTACULO/blob/0fc588080093bac535e943cc864872d5c4b39cab/Carro_GPS.pdsprj)
 
 ## 📖 Referências e Inspirações
 
