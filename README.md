@@ -111,28 +111,26 @@ Este projeto foi desenvolvido com base em diversos tutoriais e projetos relacion
 
 ```
 trator-autonomo-gps/
-├── src/
-│   ├── main.cpp              # Código principal
-│   ├── gps_navigation.h      # Módulo de navegação GPS
-│   ├── obstacle_detection.h  # Módulo de detecção de obstáculos
-│   └── motor_control.h       # Módulo de controle de motores
-├── schematics/
-│   ├── circuito.io/
-│   ├── easyeda/
-│   └── proteus/
-├── docs/
-│   ├── manual_usuario.pdf
-│   └── relatorio_tcc.pdf
+├── CODIGO FONTE/
+│   ├── CARRO-GPS.ino                         # Código principal
+│   ├── READ ME.md                            # ESTRUTURA COMPLETA DE LIGAÇÕES - ESP32
+│   └── esp32_carrinho_auto_logging.txt       # Código complementar
+├── Esquema Elétrico/
+│   └── Schematic_carro-gps_2025-09-10.pdf
+├── Esquema Elétrico em Imagens/
+│   └── Imagem conexões.png
 ├── LICENSE.md
 └── README.md
 ```
 
 ## 🎓 Trabalho Acadêmico
 
-Este projeto foi desenvolvido como Trabalho de Conclusão de Curso (TCC) em [Nome do Curso] na [Nome da Instituição].
+Este projeto foi desenvolvido como Trabalho de Conclusão de Curso (TCC) em Engenharia de Controle e Automação na Universidade Federal de Mato Grosso (UFMT).
 
-**Orientador(a)**: [Nome do Orientador]  
-**Período**: [Ano/Semestre]
+**Titulo**: [Protótipo de Trator Autônomo Com Navegação por Gps e Detecção de Obstáculos Em Tempo Real](https://bdm.ufmt.br/)
+
+**Orientador(a)**: [Thais Kempner](https://www.linkedin.com/in/thais-kempner-55432191/)  
+**Autora**: [Maria Eduarda Oliveira](https://www.linkedin.com/in/maria-eduarda-oliveira-12b21a214/)
 
 ## 👥 Autora e Colaboradora
 
