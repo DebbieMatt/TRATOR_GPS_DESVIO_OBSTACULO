@@ -129,7 +129,7 @@ Este projeto foi desenvolvido como Trabalho de Conclusão de Curso (TCC) em Enge
 
 **Titulo**: [Protótipo de Trator Autônomo Com Navegação por Gps e Detecção de Obstáculos Em Tempo Real](https://bdm.ufmt.br/handle/1/5743)
 
-**Orientador(a)**: [Thais Kempner](https://www.linkedin.com/in/thais-kempner-55432191/)  
+**Orientador(a)**: [Jésus Bueno](https://www.linkedin.com/in/buenojf/)  
 **Autora**: [Maria Eduarda Oliveira](https://www.linkedin.com/in/maria-eduarda-oliveira-12b21a214/)
 
 ## 👥 Autora e Colaboradora
